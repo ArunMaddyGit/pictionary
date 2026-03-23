@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"pictionary/matchmaking"
+	"pictionary/models"
 	"pictionary/store"
 )
 
@@ -21,8 +22,13 @@ type joinResponse struct {
 	WsURL    string `json:"wsUrl"`
 }
 
+// GameStarter starts a game for a room.
+type GameStarter interface {
+	StartGame(roomID string) error
+}
+
 // HandleJoin handles POST /api/join for matchmaking.
-func HandleJoin(st store.Store) http.HandlerFunc {
+func HandleJoin(st store.Store, starter GameStarter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -50,6 +56,11 @@ func HandleJoin(st store.Store) http.HandlerFunc {
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+		if starter != nil && len(room.Players) >= 2 && room.Status == models.StatusWaiting {
+			go func(roomID string) {
+				_ = starter.StartGame(roomID)
+			}(room.ID)
 		}
 
 		wsURL := fmt.Sprintf("ws://localhost:8080/ws?playerId=%s&roomId=%s", player.ID, room.ID)
