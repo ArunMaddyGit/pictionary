@@ -11,6 +11,11 @@ type InboundMessage struct {
 	Data   []byte
 }
 
+// DisconnectHandler receives callbacks when players disconnect.
+type DisconnectHandler interface {
+	HandlePlayerDisconnect(roomID, playerID string) error
+}
+
 // Hub tracks connected clients and routes messages.
 type Hub struct {
 	Clients    map[string]*Client
@@ -19,6 +24,7 @@ type Hub struct {
 	Unregister chan *Client
 	Inbound    chan *InboundMessage
 	Router     *MessageRouter
+	Engine     DisconnectHandler
 	mutex      sync.RWMutex
 }
 
@@ -61,16 +67,25 @@ func (h *Hub) Run() {
 			h.mutex.Unlock()
 
 		case c := <-h.Unregister:
+			removed := false
 			h.mutex.Lock()
-			delete(h.Clients, c.PlayerID)
-			if room, ok := h.Rooms[c.RoomID]; ok {
+			if _, ok := h.Clients[c.PlayerID]; ok {
+				delete(h.Clients, c.PlayerID)
+				removed = true
+			}
+			if room, ok := h.Rooms[c.RoomID]; ok && removed {
 				delete(room, c.PlayerID)
 				if len(room) == 0 {
 					delete(h.Rooms, c.RoomID)
 				}
 			}
 			h.mutex.Unlock()
-			close(c.Send)
+			if removed {
+				close(c.Send)
+				if h.Engine != nil {
+					_ = h.Engine.HandlePlayerDisconnect(c.RoomID, c.PlayerID)
+				}
+			}
 
 		case msg := <-h.Inbound:
 			if h.Router != nil && msg != nil && msg.Client != nil {

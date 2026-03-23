@@ -215,3 +215,118 @@ func TestEndGame_SetsStatusFinished(t *testing.T) {
 		t.Fatalf("Status = %v, want FINISHED", got.Status)
 	}
 }
+
+func TestHandleDisconnect_TooFewPlayers(t *testing.T) {
+	s := newFakeStore()
+	room := &models.Room{
+		ID:                 "rd1",
+		Status:             models.StatusPlaying,
+		Phase:              models.PhaseDrawing,
+		CurrentDrawerIndex: 0,
+		Players: []*models.Player{
+			{ID: "p1", Name: "A", IsDrawer: true},
+			{ID: "p2", Name: "B"},
+		},
+	}
+	_ = s.CreateRoom(room)
+	e := &GameEngine{Store: s, Hub: newTestHubForRoom(room.ID, room.Players)}
+
+	if err := e.HandlePlayerDisconnect(room.ID, "p2"); err != nil {
+		t.Fatalf("HandlePlayerDisconnect: %v", err)
+	}
+	got, _ := s.GetRoom(room.ID)
+	if got.Status != models.StatusFinished {
+		t.Fatalf("Status = %v, want FINISHED", got.Status)
+	}
+	if len(got.Players) != 1 {
+		t.Fatalf("len(Players) = %d, want 1", len(got.Players))
+	}
+}
+
+func TestHandleDisconnect_DrawerLeaves(t *testing.T) {
+	s := newFakeStore()
+	room := &models.Room{
+		ID:                 "rd2",
+		Status:             models.StatusPlaying,
+		Phase:              models.PhaseDrawing,
+		CurrentWord:        "apple",
+		CurrentDrawerIndex: 0,
+		Round:              1,
+		MaxRounds:          3,
+		Players: []*models.Player{
+			{ID: "p1", Name: "A", IsDrawer: true},
+			{ID: "p2", Name: "B"},
+			{ID: "p3", Name: "C"},
+		},
+	}
+	_ = s.CreateRoom(room)
+	e := &GameEngine{
+		Store:        s,
+		Hub:          newTestHubForRoom(room.ID, room.Players),
+		turnGapSleep: func(_ time.Duration) {},
+	}
+
+	if err := e.HandlePlayerDisconnect(room.ID, "p1"); err != nil {
+		t.Fatalf("HandlePlayerDisconnect: %v", err)
+	}
+	got, _ := s.GetRoom(room.ID)
+	if len(got.Players) != 2 {
+		t.Fatalf("len(Players) = %d, want 2", len(got.Players))
+	}
+	if got.Phase == models.PhaseDrawing {
+		t.Fatal("expected turn to end when drawer disconnects during drawing")
+	}
+}
+
+func TestHandleDisconnect_NonDrawerLeaves(t *testing.T) {
+	s := newFakeStore()
+	room := &models.Room{
+		ID:                 "rd3",
+		Status:             models.StatusPlaying,
+		Phase:              models.PhaseChoosingWord,
+		CurrentDrawerIndex: 0,
+		Round:              1,
+		MaxRounds:          3,
+		Players: []*models.Player{
+			{ID: "p1", Name: "A", IsDrawer: true},
+			{ID: "p2", Name: "B"},
+			{ID: "p3", Name: "C"},
+		},
+	}
+	_ = s.CreateRoom(room)
+	e := &GameEngine{Store: s, Hub: newTestHubForRoom(room.ID, room.Players)}
+
+	if err := e.HandlePlayerDisconnect(room.ID, "p3"); err != nil {
+		t.Fatalf("HandlePlayerDisconnect: %v", err)
+	}
+	got, _ := s.GetRoom(room.ID)
+	if got.Status != models.StatusPlaying {
+		t.Fatalf("Status = %v, want PLAYING", got.Status)
+	}
+	if len(got.Players) != 2 {
+		t.Fatalf("len(Players) = %d, want 2", len(got.Players))
+	}
+	if got.CurrentDrawerIndex != 0 {
+		t.Fatalf("CurrentDrawerIndex = %d, want 0", got.CurrentDrawerIndex)
+	}
+}
+
+func TestHandleDisconnect_LastPlayer(t *testing.T) {
+	s := newFakeStore()
+	room := &models.Room{
+		ID:     "rd4",
+		Status: models.StatusWaiting,
+		Players: []*models.Player{
+			{ID: "p1", Name: "A"},
+		},
+	}
+	_ = s.CreateRoom(room)
+	e := &GameEngine{Store: s, Hub: newTestHubForRoom(room.ID, room.Players)}
+
+	if err := e.HandlePlayerDisconnect(room.ID, "p1"); err != nil {
+		t.Fatalf("HandlePlayerDisconnect: %v", err)
+	}
+	if _, ok := s.GetRoom(room.ID); ok {
+		t.Fatal("room should be deleted when last player disconnects")
+	}
+}

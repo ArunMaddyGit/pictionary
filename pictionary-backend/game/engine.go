@@ -263,6 +263,90 @@ func (g *GameEngine) EndGame(roomID string) error {
 	return g.Store.UpdateRoom(room)
 }
 
+// HandlePlayerDisconnect removes a player and reconciles room/game state.
+func (g *GameEngine) HandlePlayerDisconnect(roomID, playerID string) error {
+	room, ok := g.Store.GetRoom(roomID)
+	if !ok {
+		return errors.New("room not found")
+	}
+
+	playerIndex := -1
+	for i, p := range room.Players {
+		if p != nil && p.ID == playerID {
+			playerIndex = i
+			break
+		}
+	}
+	if playerIndex == -1 {
+		return nil
+	}
+
+	wasDrawer := playerIndex == room.CurrentDrawerIndex
+	room.Players = append(room.Players[:playerIndex], room.Players[playerIndex+1:]...)
+
+	if len(room.Players) == 0 {
+		return g.Store.DeleteRoom(roomID)
+	}
+
+	if playerIndex < room.CurrentDrawerIndex {
+		room.CurrentDrawerIndex--
+	}
+	if room.CurrentDrawerIndex >= len(room.Players) {
+		room.CurrentDrawerIndex = 0
+	}
+
+	if err := g.Store.UpdateRoom(room); err != nil {
+		return err
+	}
+	g.broadcastRoomState(room)
+
+	if room.Status == models.StatusPlaying && len(room.Players) < 2 {
+		return g.EndGame(roomID)
+	}
+
+	if wasDrawer && room.Phase == models.PhaseDrawing {
+		// Prevent awarding drawer points to the shifted player.
+		room.CurrentDrawerIndex = -1
+		if err := g.Store.UpdateRoom(room); err != nil {
+			return err
+		}
+		return g.EndTurn(roomID)
+	}
+	return nil
+}
+
+func (g *GameEngine) broadcastRoomState(room *models.Room) {
+	if g.Hub == nil || room == nil {
+		return
+	}
+	drawerID := ""
+	if room.CurrentDrawerIndex >= 0 && room.CurrentDrawerIndex < len(room.Players) {
+		drawerID = room.Players[room.CurrentDrawerIndex].ID
+	}
+	players := make([]ws.PlayerInfo, 0, len(room.Players))
+	for _, p := range room.Players {
+		if p == nil {
+			continue
+		}
+		players = append(players, ws.PlayerInfo{
+			ID:         p.ID,
+			Name:       p.Name,
+			Score:      p.Score,
+			IsDrawer:   p.IsDrawer,
+			HasGuessed: p.HasGuessed,
+		})
+	}
+	payload, err := ws.NewMessage(ws.TypeRoomState, ws.RoomStatePayload{
+		Players:  players,
+		Round:    room.Round,
+		DrawerID: drawerID,
+		Timer:    room.TurnDuration,
+	})
+	if err == nil {
+		g.Hub.BroadcastToRoom(room.ID, payload)
+	}
+}
+
 func (g *GameEngine) pickWordsExcludingHistory(history []string, count int) []string {
 	out := make([]string, 0, count)
 	seen := make(map[string]struct{}, count)
