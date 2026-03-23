@@ -248,7 +248,15 @@ func (g *GameEngine) EndGame(roomID string) error {
 		return errors.New("room not found")
 	}
 	room.Status = models.StatusFinished
-	leaderboard := scoring.BuildLeaderboard(room.Players)
+	scores := scoring.BuildLeaderboard(room.Players)
+	leaderboard := make([]ws.PlayerScore, 0, len(scores))
+	for _, p := range scores {
+		leaderboard = append(leaderboard, ws.PlayerScore{
+			ID:    p.ID,
+			Name:  p.Name,
+			Score: p.Score,
+		})
+	}
 	if payload, err := ws.NewMessage(ws.TypeGameEnd, ws.GameEndPayload{Leaderboard: leaderboard}); err == nil {
 		g.Hub.BroadcastToRoom(room.ID, payload)
 	}

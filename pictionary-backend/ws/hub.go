@@ -18,6 +18,7 @@ type Hub struct {
 	Register   chan *Client
 	Unregister chan *Client
 	Inbound    chan *InboundMessage
+	Router     *MessageRouter
 	mutex      sync.RWMutex
 }
 
@@ -72,7 +73,9 @@ func (h *Hub) Run() {
 			close(c.Send)
 
 		case msg := <-h.Inbound:
-			_ = msg
+			if h.Router != nil && msg != nil && msg.Client != nil {
+				_ = h.Router.Route(msg.Client, msg.Data)
+			}
 		}
 	}
 }

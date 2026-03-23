@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"pictionary/models"
-	"pictionary/ws"
 )
 
 var scoreTable = []int{120, 100, 80, 60, 40, 30, 20, 10}
@@ -38,17 +37,14 @@ func ApplyScore(player *models.Player, guessOrder int) {
 }
 
 // BuildLeaderboard returns all players sorted by score descending.
-func BuildLeaderboard(players []*models.Player) []ws.PlayerScore {
-	leaderboard := make([]ws.PlayerScore, 0, len(players))
+func BuildLeaderboard(players []*models.Player) []*models.Player {
+	leaderboard := make([]*models.Player, 0, len(players))
 	for _, p := range players {
 		if p == nil {
 			continue
 		}
-		leaderboard = append(leaderboard, ws.PlayerScore{
-			ID:    p.ID,
-			Name:  p.Name,
-			Score: p.Score,
-		})
+		cp := *p
+		leaderboard = append(leaderboard, &cp)
 	}
 	sort.SliceStable(leaderboard, func(i, j int) bool {
 		return leaderboard[i].Score > leaderboard[j].Score
