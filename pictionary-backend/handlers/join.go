@@ -1,0 +1,67 @@
+package handlers
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"unicode/utf8"
+
+	"pictionary/matchmaking"
+	"pictionary/store"
+)
+
+type joinRequest struct {
+	Name string `json:"name"`
+}
+
+type joinResponse struct {
+	PlayerID string `json:"playerId"`
+	RoomID   string `json:"roomId"`
+	WsURL    string `json:"wsUrl"`
+}
+
+// HandleJoin handles POST /api/join for matchmaking.
+func HandleJoin(st store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		defer r.Body.Close()
+
+		var req joinRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
+		if utf8.RuneCountInString(name) > 20 {
+			http.Error(w, "name too long", http.StatusBadRequest)
+			return
+		}
+
+		room, player, err := matchmaking.FindOrCreateRoom(st, name)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		wsURL := fmt.Sprintf("ws://localhost:8080/ws?playerId=%s&roomId=%s", player.ID, room.ID)
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(joinResponse{
+			PlayerID: player.ID,
+			RoomID:   room.ID,
+			WsURL:    wsURL,
+		}); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+}
