@@ -37,12 +37,12 @@ func FindOrCreateRoom(s store.Store, playerName string) (*models.Room, *models.P
 	roomID := uuid.NewString()
 	player := newPlayer(playerName)
 	room := &models.Room{
-		ID:            roomID,
-		Players:       []*models.Player{player},
-		Status:        models.StatusWaiting,
-		MaxRounds:     3,
-		TurnDuration:  60,
-		Phase:         models.PhaseWaiting,
+		ID:           roomID,
+		Players:      []*models.Player{player},
+		Status:       models.StatusWaiting,
+		MaxRounds:    3,
+		TurnDuration: 60,
+		Phase:        models.PhaseWaiting,
 	}
 	if err := s.CreateRoom(room); err != nil {
 		return nil, nil, err

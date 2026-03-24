@@ -20,6 +20,8 @@ type GameEngine struct {
 	turnGapSleep func(time.Duration)
 }
 
+const chooseWordTimeout = 15 * time.Second
+
 func (g *GameEngine) sleep(d time.Duration) {
 	if g.turnGapSleep != nil {
 		g.turnGapSleep(d)
@@ -68,6 +70,7 @@ func (g *GameEngine) StartTurn(roomID string) error {
 	}
 
 	drawer := room.Players[room.CurrentDrawerIndex]
+	drawerID := drawer.ID
 	for i, p := range room.Players {
 		p.IsDrawer = i == room.CurrentDrawerIndex
 		p.HasGuessed = false
@@ -79,19 +82,6 @@ func (g *GameEngine) StartTurn(roomID string) error {
 
 	if payload, err := ws.NewMessage(ws.TypeWordOptions, ws.WordOptionsPayload{Words: wordOptions}); err == nil {
 		g.Hub.SendToPlayer(drawer.ID, payload)
-	}
-
-	for _, p := range room.Players {
-		if p.ID == drawer.ID {
-			continue
-		}
-		if payload, err := ws.NewMessage(ws.TypeTurnStart, ws.TurnStartPayload{
-			DrawerID:   drawer.ID,
-			MaskedWord: g.MaskWord(""),
-			IsDrawer:   false,
-		}); err == nil {
-			g.Hub.SendToPlayer(p.ID, payload)
-		}
 	}
 
 	statePlayers := make([]ws.PlayerInfo, 0, len(room.Players))
@@ -113,7 +103,40 @@ func (g *GameEngine) StartTurn(roomID string) error {
 	if err == nil {
 		g.Hub.BroadcastToRoom(room.ID, statePayload)
 	}
-	return g.Store.UpdateRoom(room)
+	if err := g.Store.UpdateRoom(room); err != nil {
+		return err
+	}
+
+	// Drawer must choose within timeout, otherwise auto-pick a fallback word.
+	options := append([]string(nil), wordOptions...)
+	go func() {
+		time.Sleep(chooseWordTimeout)
+		latest, ok := g.Store.GetRoom(roomID)
+		if !ok || latest.Phase != models.PhaseChoosingWord || len(latest.Players) == 0 {
+			return
+		}
+		if latest.CurrentDrawerIndex < 0 || latest.CurrentDrawerIndex >= len(latest.Players) {
+			return
+		}
+		if latest.Players[latest.CurrentDrawerIndex].ID != drawerID {
+			return
+		}
+		selected := ""
+		if len(options) > 0 {
+			selected = options[0]
+		} else {
+			fallback := g.pickWordsExcludingHistory(latest.WordHistory, 1)
+			if len(fallback) > 0 {
+				selected = fallback[0]
+			}
+		}
+		if strings.TrimSpace(selected) == "" {
+			return
+		}
+		_ = g.HandleWordSelected(roomID, drawerID, selected)
+	}()
+
+	return nil
 }
 
 // HandleWordSelected validates drawer choice, enters drawing phase, and starts turn timer.
@@ -131,6 +154,9 @@ func (g *GameEngine) HandleWordSelected(roomID string, playerID string, word str
 	drawer := room.Players[room.CurrentDrawerIndex]
 	if drawer.ID != playerID {
 		return errors.New("only current drawer can select a word")
+	}
+	if room.Phase != models.PhaseChoosingWord {
+		return nil
 	}
 	if strings.TrimSpace(word) == "" {
 		return errors.New("word is empty")

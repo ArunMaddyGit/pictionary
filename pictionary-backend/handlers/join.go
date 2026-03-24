@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"pictionary/matchmaking"
@@ -22,6 +25,18 @@ type joinResponse struct {
 	WsURL    string `json:"wsUrl"`
 }
 
+type joinRateEntry struct {
+	count       int
+	windowStart time.Time
+}
+
+var (
+	joinRateMu      sync.Mutex
+	joinRateByIP    = make(map[string]*joinRateEntry)
+	joinRateWindow  = time.Minute
+	joinRateMaxHits = 10
+)
+
 // GameStarter starts a game for a room.
 type GameStarter interface {
 	StartGame(roomID string) error
@@ -32,6 +47,10 @@ func HandleJoin(st store.Store, starter GameStarter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !allowJoinRequest(remoteIP(r.RemoteAddr)) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
 		defer r.Body.Close()
@@ -75,4 +94,31 @@ func HandleJoin(st store.Store, starter GameStarter) http.HandlerFunc {
 			return
 		}
 	}
+}
+
+func remoteIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
+}
+
+func allowJoinRequest(ip string) bool {
+	if ip == "" {
+		return true
+	}
+	now := time.Now()
+	joinRateMu.Lock()
+	defer joinRateMu.Unlock()
+	entry, exists := joinRateByIP[ip]
+	if !exists || now.Sub(entry.windowStart) >= joinRateWindow {
+		joinRateByIP[ip] = &joinRateEntry{count: 1, windowStart: now}
+		return true
+	}
+	if entry.count >= joinRateMaxHits {
+		return false
+	}
+	entry.count++
+	return true
 }

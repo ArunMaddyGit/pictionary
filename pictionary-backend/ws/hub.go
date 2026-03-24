@@ -25,6 +25,8 @@ type Hub struct {
 	Inbound    chan *InboundMessage
 	Router     *MessageRouter
 	Engine     DisconnectHandler
+	done       chan struct{}
+	stopOnce   sync.Once
 	mutex      sync.RWMutex
 }
 
@@ -50,6 +52,7 @@ func NewHub() *Hub {
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 		Inbound:    make(chan *InboundMessage, 256),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -91,8 +94,17 @@ func (h *Hub) Run() {
 			if h.Router != nil && msg != nil && msg.Client != nil {
 				_ = h.Router.Route(msg.Client, msg.Data)
 			}
+		case <-h.done:
+			return
 		}
 	}
+}
+
+// Stop gracefully stops the hub run loop.
+func (h *Hub) Stop() {
+	h.stopOnce.Do(func() {
+		close(h.done)
+	})
 }
 
 // BroadcastToRoom sends a copy of message to every client in the room.

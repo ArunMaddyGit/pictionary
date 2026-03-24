@@ -24,7 +24,7 @@ func TestJoinAndStartGame(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/join", HandleJoin(st, engine))
-	mux.HandleFunc("/ws", ws.HandleWebSocket(hub, st))
+	mux.HandleFunc("/ws", ws.HandleWebSocket(hub, st, engine))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
